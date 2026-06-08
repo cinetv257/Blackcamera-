@@ -75,9 +75,22 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     // Animation flash state on capture
     val flashIndicator = MutableStateFlow(false)
 
+    // Horizon stabilizer states
+    val deviceRoll = MutableStateFlow(0f)
+    val devicePitch = MutableStateFlow(0f)
+    private var sensorManager: android.hardware.SensorManager? = null
+    private var sensorListener: android.hardware.SensorEventListener? = null
+
+    // Grid states: 0 = Off, 1 = 3x3, 2 = Target Crosshair, 3 = Golden Ratio
+    val activeGridType = MutableStateFlow(1)
+
+    // Gallery states
+    val capturedMediaList = MutableStateFlow<List<CapturedMedia>>(emptyList())
+
     init {
         // Start live system clocks and battery tracking
         startClockAndBatteryTriggers()
+        startHorizonSensor()
 
         // Load the last imported or active LUT from preferences
         viewModelScope.launch {
@@ -447,4 +460,161 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             _eventToast.emit(msg)
         }
     }
+
+    // --- SENSORS & HORIZON STABILIZATION ---
+    fun startHorizonSensor() {
+        val app = getApplication<Application>()
+        sensorManager = app.getSystemService(Context.SENSOR_SERVICE) as? android.hardware.SensorManager
+        val accel = sensorManager?.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER)
+        if (accel != null) {
+            sensorListener = object : android.hardware.SensorEventListener {
+                override fun onSensorChanged(event: android.hardware.SensorEvent?) {
+                    if (event == null) return
+                    val ax = event.values[0]
+                    val ay = event.values[1]
+                    val az = event.values[2]
+                    
+                    val calculatedRoll = Math.toDegrees(Math.atan2(-ax.toDouble(), ay.toDouble())).toFloat()
+                    val calculatedPitch = Math.toDegrees(Math.atan2(az.toDouble(), Math.sqrt((ax * ax + ay * ay).toDouble()))).toFloat()
+                    
+                    deviceRoll.value = calculatedRoll
+                    devicePitch.value = calculatedPitch
+                }
+
+                override fun onAccuracyChanged(sensor: android.hardware.Sensor?, accuracy: Int) {}
+            }
+            sensorManager?.registerListener(sensorListener, accel, android.hardware.SensorManager.SENSOR_DELAY_UI)
+        }
+    }
+
+    fun stopHorizonSensor() {
+        sensorListener?.let {
+            sensorManager?.unregisterListener(it)
+        }
+    }
+
+    fun setGridType(type: Int) {
+        activeGridType.value = type
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        stopHorizonSensor()
+    }
+
+    // --- REFRESH AND QUERY SAVED PICTURES / VIDEOS DIRECTLY IN MEDIASTORE ---
+    fun refreshCapturedMedia(context: Context) {
+        viewModelScope.launch {
+            val list = mutableListOf<CapturedMedia>()
+            withContext(Dispatchers.IO) {
+                try {
+                    // Query images
+                    val imageProjection = arrayOf(
+                        android.provider.MediaStore.Images.Media._ID,
+                        android.provider.MediaStore.Images.Media.DISPLAY_NAME,
+                        android.provider.MediaStore.Images.Media.DATE_ADDED
+                    )
+                    
+                    val imageSelection = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                        "${android.provider.MediaStore.Images.Media.RELATIVE_PATH} LIKE ?"
+                    } else {
+                        "${android.provider.MediaStore.Images.Media.DATA} LIKE ?"
+                    }
+                    
+                    val imageSelectionArgs = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                        arrayOf("%Pictures/BlackCamera%")
+                    } else {
+                        arrayOf("%/BlackCamera/%")
+                    }
+                    
+                    context.contentResolver.query(
+                        android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                        imageProjection,
+                        imageSelection,
+                        imageSelectionArgs,
+                        "${android.provider.MediaStore.Images.Media.DATE_ADDED} DESC"
+                    )?.use { cursor ->
+                        val idCol = cursor.getColumnIndexOrThrow(android.provider.MediaStore.Images.Media._ID)
+                        val nameCol = cursor.getColumnIndexOrThrow(android.provider.MediaStore.Images.Media.DISPLAY_NAME)
+                        val dateCol = cursor.getColumnIndexOrThrow(android.provider.MediaStore.Images.Media.DATE_ADDED)
+                        
+                        while (cursor.moveToNext()) {
+                            val id = cursor.getLong(idCol)
+                            val name = cursor.getString(nameCol)
+                            val date = cursor.getLong(dateCol)
+                            val uri = android.content.ContentUris.withAppendedId(
+                                android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id
+                            )
+                            list.add(CapturedMedia(id, uri, name, isVideo = false, dateAdded = date))
+                        }
+                    }
+                    
+                    // Query videos
+                    val videoProjection = arrayOf(
+                        android.provider.MediaStore.Video.Media._ID,
+                        android.provider.MediaStore.Video.Media.DISPLAY_NAME,
+                        android.provider.MediaStore.Video.Media.DATE_ADDED
+                    )
+                    
+                    val videoSelection = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                        "${android.provider.MediaStore.Video.Media.RELATIVE_PATH} LIKE ?"
+                    } else {
+                        "${android.provider.MediaStore.Video.Media.DATA} LIKE ?"
+                    }
+                    
+                    val videoSelectionArgs = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                        arrayOf("%Movies/BlackCamera%")
+                    } else {
+                        arrayOf("%/BlackCamera/%")
+                    }
+                    
+                    context.contentResolver.query(
+                        android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                        videoProjection,
+                        videoSelection,
+                        videoSelectionArgs,
+                        "${android.provider.MediaStore.Video.Media.DATE_ADDED} DESC"
+                    )?.use { cursor ->
+                        val idCol = cursor.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media._ID)
+                        val nameCol = cursor.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media.DISPLAY_NAME)
+                        val dateCol = cursor.getColumnIndexOrThrow(android.provider.MediaStore.Video.Media.DATE_ADDED)
+                        
+                        while (cursor.moveToNext()) {
+                            val id = cursor.getLong(idCol)
+                            val name = cursor.getString(nameCol)
+                            val date = cursor.getLong(dateCol)
+                            val uri = android.content.ContentUris.withAppendedId(
+                                android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id
+                            )
+                            list.add(CapturedMedia(id, uri, name, isVideo = true, dateAdded = date))
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+            capturedMediaList.value = list.sortedByDescending { it.dateAdded }
+        }
+    }
+
+    fun deleteMedia(context: Context, media: CapturedMedia) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                context.contentResolver.delete(media.uri, null, null)
+                refreshCapturedMedia(context)
+                showToast("Fichier supprimé de la galerie")
+            } catch (e: Exception) {
+                e.printStackTrace()
+                showToast("Impossible de supprimer ce fichier.")
+            }
+        }
+    }
 }
+
+data class CapturedMedia(
+    val id: Long,
+    val uri: android.net.Uri,
+    val name: String,
+    val isVideo: Boolean,
+    val dateAdded: Long
+)

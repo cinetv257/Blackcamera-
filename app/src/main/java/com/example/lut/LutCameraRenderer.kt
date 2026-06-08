@@ -34,7 +34,8 @@ class LutCameraRenderer(
 
     private val fragmentShaderCode = """
         #version 300 es
-        #extension GL_OES_EGL_image_external_essl3 : require
+        #extension GL_OES_EGL_image_external_essl3 : enable
+        #extension GL_OES_EGL_image_external : enable
         precision mediump float;
         
         in vec2 vTextureCoord;
@@ -95,6 +96,8 @@ class LutCameraRenderer(
 
     var surfaceTexture: SurfaceTexture? = null
         private set
+
+    var glSurfaceView: GLSurfaceView? = null
 
     private val stMatrix = FloatArray(16)
 
@@ -311,9 +314,7 @@ class LutCameraRenderer(
 
     override fun onFrameAvailable(surfaceTexture: SurfaceTexture?) {
         // Redraw frame when incoming buffer is ready
-        surfaceTexture?.let {
-            // Signal a draw request
-        }
+        glSurfaceView?.requestRender()
     }
 
     private fun loadShader(type: Int, shaderCode: String): Int {

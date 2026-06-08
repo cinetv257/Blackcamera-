@@ -46,6 +46,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -76,6 +77,13 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
+import coil.compose.AsyncImage
+import com.example.viewmodel.CapturedMedia
+import android.widget.VideoView
+import android.widget.MediaController
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.items
 
 class MainActivity : ComponentActivity() {
 
@@ -144,6 +152,7 @@ class MainActivity : ComponentActivity() {
 
                     // Collect notifications inside visual layer
                     LaunchedEffect(Unit) {
+                        cameraViewModel.refreshCapturedMedia(this@MainActivity)
                         cameraViewModel.eventToast.collectLatest { msg ->
                             Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
                         }
@@ -377,7 +386,7 @@ class MainActivity : ComponentActivity() {
                             // Process JPEG buffer with software trilinear LUT filter
                             val processedBmp = viewModel.applyLutToCapturedPhoto(bytes)
                             if (processedBmp != null) {
-                                saveBitmapToGallery(processedBmp)
+                                saveBitmapToGallery(processedBmp, viewModel)
                             } else {
                                 withContext(Dispatchers.Main) {
                                     Toast.makeText(this@MainActivity, "Erreur d'application de la LUT", Toast.LENGTH_SHORT).show()
@@ -396,7 +405,7 @@ class MainActivity : ComponentActivity() {
         )
     }
 
-    private fun saveBitmapToGallery(bitmap: Bitmap) {
+    private fun saveBitmapToGallery(bitmap: Bitmap, viewModel: CameraViewModel) {
         val fileName = "BC_${System.currentTimeMillis()}.jpg"
         val contentValues = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
@@ -422,6 +431,7 @@ class MainActivity : ComponentActivity() {
                 }
                 lifecycleScope.launch(Dispatchers.Main) {
                     Toast.makeText(this@MainActivity, "Photo enregistrée ! $fileName", Toast.LENGTH_LONG).show()
+                    viewModel.refreshCapturedMedia(this@MainActivity)
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -469,6 +479,7 @@ class MainActivity : ComponentActivity() {
                             viewModel.stopRecordingTimer()
                             if (!event.hasError()) {
                                 Toast.makeText(this, "Vidéo enregistrée : $fileName", Toast.LENGTH_LONG).show()
+                                viewModel.refreshCapturedMedia(this)
                             } else {
                                 Log.e(tags, "Video finalized with error: ${event.error}")
                                 activeRecording?.close()
@@ -538,6 +549,7 @@ fun CameraControlsScreen(
     var captureMode by remember { mutableStateOf(CaptureMode.PHOTO) }
     var lateralExpanded by remember { mutableStateOf(false) }
     var showLutMenuSheet by remember { mutableStateOf(false) }
+    var showGallerySheet by remember { mutableStateOf(false) }
 
     // Collect States
     val batteryPct by viewModel.batteryPct.collectAsStateWithLifecycle()
@@ -573,8 +585,9 @@ fun CameraControlsScreen(
                 factory = { ctx ->
                     GLSurfaceView(ctx).apply {
                         setEGLContextClientVersion(3)
+                        renderer.glSurfaceView = this
                         setRenderer(renderer)
-                        renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
+                        renderMode = GLSurfaceView.RENDERMODE_WHEN_DIRTY
                     }.also { glView ->
                         onGlSurfaceViewCreated(glView)
                     }
@@ -583,14 +596,82 @@ fun CameraControlsScreen(
             )
 
             // Dynamic grid overlays simulation
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val stepW = size.width / 3
-                val stepH = size.height / 3
-                // Draw rules lines
-                drawLine(Color(0x22FFFFFF), start = androidx.compose.ui.geometry.Offset(stepW, 0f), end = androidx.compose.ui.geometry.Offset(stepW, size.height), strokeWidth = 1f)
-                drawLine(Color(0x22FFFFFF), start = androidx.compose.ui.geometry.Offset(stepW * 2, 0f), end = androidx.compose.ui.geometry.Offset(stepW * 2, size.height), strokeWidth = 1f)
-                drawLine(Color(0x22FFFFFF), start = androidx.compose.ui.geometry.Offset(0f, stepH), end = androidx.compose.ui.geometry.Offset(size.width, stepH), strokeWidth = 1f)
-                drawLine(Color(0x22FFFFFF), start = androidx.compose.ui.geometry.Offset(0f, stepH * 2), end = androidx.compose.ui.geometry.Offset(size.width, stepH * 2), strokeWidth = 1f)
+            val activeGridTypeVal by viewModel.activeGridType.collectAsStateWithLifecycle()
+            if (activeGridTypeVal > 0) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    when (activeGridTypeVal) {
+                        1 -> { // 3x3 Grid
+                            val stepW = size.width / 3f
+                            val stepH = size.height / 3f
+                            drawLine(Color(0x33FFFFFF), start = androidx.compose.ui.geometry.Offset(stepW, 0f), end = androidx.compose.ui.geometry.Offset(stepW, size.height), strokeWidth = 1.dp.toPx())
+                            drawLine(Color(0x33FFFFFF), start = androidx.compose.ui.geometry.Offset(stepW * 2, 0f), end = androidx.compose.ui.geometry.Offset(stepW * 2, size.height), strokeWidth = 1.dp.toPx())
+                            drawLine(Color(0x33FFFFFF), start = androidx.compose.ui.geometry.Offset(0f, stepH), end = androidx.compose.ui.geometry.Offset(size.width, stepH), strokeWidth = 1.dp.toPx())
+                            drawLine(Color(0x33FFFFFF), start = androidx.compose.ui.geometry.Offset(0f, stepH * 2), end = androidx.compose.ui.geometry.Offset(size.width, stepH * 2), strokeWidth = 1.dp.toPx())
+                        }
+                        2 -> { // Center Crosshair / Target Selector
+                            val cx = size.width / 2f
+                            val cy = size.height / 2f
+                            drawCircle(Color(0x1AFFFFFF), radius = 60.dp.toPx(), center = androidx.compose.ui.geometry.Offset(cx, cy))
+                            drawLine(Color(0x33FFFFFF), start = androidx.compose.ui.geometry.Offset(cx - 30.dp.toPx(), cy), end = androidx.compose.ui.geometry.Offset(cx + 30.dp.toPx(), cy), strokeWidth = 1.5.dp.toPx())
+                            drawLine(Color(0x33FFFFFF), start = androidx.compose.ui.geometry.Offset(cx, cy - 30.dp.toPx()), end = androidx.compose.ui.geometry.Offset(cx, cy + 30.dp.toPx()), strokeWidth = 1.5.dp.toPx())
+                        }
+                        3 -> { // Golden Ratio (Phi approx 0.618 and 0.382)
+                            val r1 = 0.382f
+                            val r2 = 0.618f
+                            drawLine(Color(0x33FF9F0A), start = androidx.compose.ui.geometry.Offset(size.width * r1, 0f), end = androidx.compose.ui.geometry.Offset(size.width * r1, size.height), strokeWidth = 1.dp.toPx())
+                            drawLine(Color(0x33FF9F0A), start = androidx.compose.ui.geometry.Offset(size.width * r2, 0f), end = androidx.compose.ui.geometry.Offset(size.width * r2, size.height), strokeWidth = 1.dp.toPx())
+                            drawLine(Color(0x33FF9F0A), start = androidx.compose.ui.geometry.Offset(0f, size.height * r1), end = androidx.compose.ui.geometry.Offset(size.width, size.height * r1), strokeWidth = 1.dp.toPx())
+                            drawLine(Color(0x33FF9F0A), start = androidx.compose.ui.geometry.Offset(0f, size.height * r2), end = androidx.compose.ui.geometry.Offset(size.width, size.height * r2), strokeWidth = 1.dp.toPx())
+                        }
+                    }
+                }
+            }
+
+            // Real-time Gyro Gravity Level/Horizon sensor overlay
+            val roll by viewModel.deviceRoll.collectAsStateWithLifecycle()
+            val pitch by viewModel.devicePitch.collectAsStateWithLifecycle()
+            
+            // Draw stabilizer at center (only draw if sensor listener active)
+            if (viewModel.deviceRoll.value != 0f || viewModel.devicePitch.value != 0f) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(bottom = 70.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Canvas(modifier = Modifier.size(160.dp)) {
+                        val cx = size.width / 2f
+                        val cy = size.height / 2f
+                        val strokeW = 1.5.dp.toPx()
+                        
+                        // Limit/Scale pitch offset
+                        val pitchOffset = (pitch * -1.8f).coerceIn(-(40.dp.toPx()), 40.dp.toPx())
+                        
+                        val isPerfectLevel = kotlin.math.abs(roll) < 1.0f && kotlin.math.abs(pitch) < 1.0f
+                        val themeColor = if (isPerfectLevel) Color(0xFF34C759) else Color(0xFFFF9F0A)
+                        
+                        // Center reference level circle
+                        drawCircle(
+                            color = if (isPerfectLevel) Color(0x6634C759) else Color(0x22FFFFFF),
+                            radius = 6.dp.toPx(),
+                            center = androidx.compose.ui.geometry.Offset(cx, cy)
+                        )
+                        
+                        // Reference steady level dashes (horizontal wings)
+                        drawLine(Color(0x44FFFFFF), start = androidx.compose.ui.geometry.Offset(cx - 50.dp.toPx(), cy), end = androidx.compose.ui.geometry.Offset(cx - 20.dp.toPx(), cy), strokeWidth = strokeW)
+                        drawLine(Color(0x44FFFFFF), start = androidx.compose.ui.geometry.Offset(cx + 20.dp.toPx(), cy), end = androidx.compose.ui.geometry.Offset(cx + 50.dp.toPx(), cy), strokeWidth = strokeW)
+                        
+                        // Rotating center bar using clean Compose rotate scope
+                        rotate(degrees = -roll, pivot = androidx.compose.ui.geometry.Offset(cx, cy)) {
+                            drawLine(
+                                color = themeColor,
+                                start = androidx.compose.ui.geometry.Offset(cx - 30.dp.toPx(), cy + pitchOffset),
+                                end = androidx.compose.ui.geometry.Offset(cx + 30.dp.toPx(), cy + pitchOffset),
+                                strokeWidth = 2.5.dp.toPx()
+                            )
+                        }
+                    }
+                }
             }
         }
 
@@ -968,6 +1049,65 @@ fun CameraControlsScreen(
                                 }
                             }
                         }
+
+                        // Advanced Grid overlay selector
+                        item {
+                            val activeGridTypeVal by viewModel.activeGridType.collectAsStateWithLifecycle()
+                            Column {
+                                Text("GRILLE DE COMPOSITION", color = Color.White, fontSize = 11.sp)
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    val gridLabels = listOf("Off", "3x3", "Cible", "Or")
+                                    gridLabels.forEachIndexed { index, label ->
+                                        Button(
+                                            onClick = { viewModel.setGridType(index) },
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = if (activeGridTypeVal == index) Color(0xFFFF9F0A) else Color(0xFF262626),
+                                                contentColor = Color.White
+                                            ),
+                                            shape = RoundedCornerShape(4.dp),
+                                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                                            modifier = Modifier.weight(1f).height(32.dp).testTag("grid_select_$index")
+                                        ) {
+                                            Text(label, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Advanced Level horizon toggler
+                        item {
+                            var levelEnabled by remember { mutableStateOf(true) }
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("NIVEAU À BULLE (GYRO)", color = Color.White, fontSize = 11.sp)
+                                Switch(
+                                    checked = levelEnabled,
+                                    onCheckedChange = {
+                                        levelEnabled = it
+                                        if (it) {
+                                            viewModel.startHorizonSensor()
+                                        } else {
+                                            viewModel.stopHorizonSensor()
+                                            viewModel.deviceRoll.value = 0f
+                                            viewModel.devicePitch.value = 0f
+                                        }
+                                    },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = Color(0xFFFF9F0A),
+                                        checkedTrackColor = Color(0x61FF9F0A)
+                                    ),
+                                    modifier = Modifier.testTag("bubble_level_switch")
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -1038,6 +1178,52 @@ fun CameraControlsScreen(
                         contentDescription = "LUT selection menu",
                         tint = Color.White
                     )
+                }
+
+                // Left-Middle: Gallery Viewer Thumbnail Button
+                val mediaList by viewModel.capturedMediaList.collectAsStateWithLifecycle()
+                val lastCaptured = mediaList.firstOrNull()
+
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xEE222222))
+                        .clickable { showGallerySheet = true }
+                        .testTag("gallery_preview_button"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (lastCaptured != null) {
+                        AsyncImage(
+                            model = lastCaptured.uri,
+                            contentDescription = "Dernière capture",
+                            modifier = Modifier.fillMaxSize().clip(CircleShape),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                        )
+                        // If it's a video, add small play overlay indicator
+                        if (lastCaptured.isVideo) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(Color(0x33000000)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PlayArrow,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.PhotoLibrary,
+                            contentDescription = "Galerie vide",
+                            tint = Color.Gray,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
                 }
 
                 // Middle: Large Tactile trigger circular capture button
@@ -1292,6 +1478,219 @@ fun CameraControlsScreen(
                                                     modifier = Modifier.size(18.dp)
                                                 )
                                             }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- 6. IN-APP GALLERY & VIEWER SHEET ---
+        if (showGallerySheet) {
+            ModalBottomSheet(
+                onDismissRequest = { showGallerySheet = false },
+                containerColor = Color(0xFB0A0A0A),
+                contentColor = Color.White,
+                tonalElevation = 8.dp,
+                shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
+            ) {
+                var selectedMedia by remember { mutableStateOf<CapturedMedia?>(null) }
+                
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                ) {
+                    // Header title area
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "BlackCamera Galerie",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFFF9F0A)
+                        )
+                        IconButton(
+                            onClick = { showGallerySheet = false }
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = "Fermer la galerie", tint = Color.White)
+                        }
+                    }
+
+                    val mediaList by viewModel.capturedMediaList.collectAsStateWithLifecycle()
+
+                    if (mediaList.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(260.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(Icons.Default.PhotoLibrary, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(48.dp))
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text(
+                                    "Aucun média trouvé.\nPrenez des photos ou enregistrez des vidéos !",
+                                    color = Color.Gray,
+                                    fontSize = 12.sp,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    } else {
+                        LazyVerticalGrid(
+                            columns = GridCells.Adaptive(minSize = 90.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 400.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            contentPadding = PaddingValues(bottom = 24.dp)
+                        ) {
+                            items(mediaList) { media ->
+                                Box(
+                                    modifier = Modifier
+                                        .aspectRatio(1f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color(0xFF161616))
+                                        .clickable { selectedMedia = media }
+                                ) {
+                                    AsyncImage(
+                                        model = media.uri,
+                                        contentDescription = media.name,
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                    )
+                                    // Overlay badge for videos
+                                    if (media.isVideo) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .background(Color(0x22000000)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.PlayCircle,
+                                                contentDescription = "Vidéo",
+                                                tint = Color.White.copy(alpha = 0.85f),
+                                                modifier = Modifier.size(28.dp)
+                                            )
+                                        }
+                                        Box(
+                                            modifier = Modifier
+                                                .align(Alignment.BottomEnd)
+                                                .padding(4.dp)
+                                                .background(Color(0xCC000000), RoundedCornerShape(4.dp))
+                                                .padding(horizontal = 4.dp, vertical = 2.dp)
+                                        ) {
+                                            Text("VIDEO", color = Color(0xFFFF9F0A), fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Sub-modal Overlay Viewer for the selected media
+                selectedMedia?.let { media ->
+                    androidx.compose.ui.window.Dialog(
+                        onDismissRequest = { selectedMedia = null }
+                    ) {
+                        Surface(
+                            modifier = Modifier.fillMaxSize(),
+                            color = Color.Black
+                        ) {
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                // 1. Rendering media content
+                                if (media.isVideo) {
+                                    AndroidView(
+                                        factory = { ctx ->
+                                            VideoView(ctx).apply {
+                                                val mediaController = MediaController(ctx)
+                                                mediaController.setAnchorView(this)
+                                                setMediaController(mediaController)
+                                                setVideoURI(media.uri)
+                                                setOnPreparedListener { mp ->
+                                                    mp.isLooping = true
+                                                    start()
+                                                }
+                                            }
+                                        },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .aspectRatio(16f / 9f)
+                                            .align(Alignment.Center)
+                                    )
+                                } else {
+                                    AsyncImage(
+                                        model = media.uri,
+                                        contentDescription = media.name,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .align(Alignment.Center),
+                                        contentScale = androidx.compose.ui.layout.ContentScale.Fit
+                                    )
+                                }
+
+                                // 2. Custom header bar with actions (Share, Delete, Close)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(Brush.verticalGradient(listOf(Color.Black, Color.Transparent)))
+                                        .align(Alignment.TopCenter)
+                                        .padding(horizontal = 16.dp, vertical = 24.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    IconButton(
+                                        onClick = { selectedMedia = null },
+                                        modifier = Modifier.background(Color(0x66000000), CircleShape)
+                                    ) {
+                                        Icon(Icons.Default.ArrowBack, contentDescription = "Retour", tint = Color.White)
+                                    }
+
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f).padding(horizontal = 8.dp)) {
+                                        Text(media.name, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, textAlign = TextAlign.Center)
+                                    }
+
+                                    Row {
+                                        // Share Button Action
+                                        IconButton(
+                                            onClick = {
+                                                try {
+                                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                                        type = if (media.isVideo) "video/mp4" else "image/jpeg"
+                                                        putExtra(Intent.EXTRA_STREAM, media.uri)
+                                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                    }
+                                                    context.startActivity(Intent.createChooser(shareIntent, "Partager via"))
+                                                } catch (e: Exception) {
+                                                    Toast.makeText(context, "Impossible de partager", Toast.LENGTH_SHORT).show()
+                                                }
+                                            },
+                                            modifier = Modifier.background(Color(0x66000000), CircleShape)
+                                        ) {
+                                            Icon(Icons.Default.Share, contentDescription = "Partager", tint = Color.White)
+                                        }
+
+                                        Spacer(modifier = Modifier.width(8.dp))
+
+                                        // Delete Button Action
+                                        IconButton(
+                                            onClick = {
+                                                viewModel.deleteMedia(context, media)
+                                                selectedMedia = null
+                                            },
+                                            modifier = Modifier.background(Color(0x663F0000), CircleShape)
+                                        ) {
+                                            Icon(Icons.Default.Delete, contentDescription = "Supprimer", tint = Color.Red)
                                         }
                                     }
                                 }

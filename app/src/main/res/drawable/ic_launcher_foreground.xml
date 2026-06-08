@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Camera Body Frame -->
+    <path
+        android:fillColor="#E1E1E1"
+        android:pathData="M24,36 L36,36 L40,30 L68,30 L72,36 L84,36 C87.3,36 90,38.7 90,42 L90,74 C90,77.3 87.3,80 84,80 L24,80 C20.7,80 18,77.3 18,74 L18,42 C18,38.7 20.7,36 24,36 Z" />
+    
+    <!-- Outer Matte Base of Lens -->
+    <path
+        android:fillColor="#151515"
+        android:pathData="M54,73 C63.4,73 71,65.4 71,56 C71,46.6 63.4,39 54,39 C44.6,39 37,46.6 37,56 C37,65.4 44.6,73 54,73 Z" />
+        
+    <!-- Chrome Metal Lens Ring Accent -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.5"
+        android:pathData="M54,70 C61.7,70 68,63.7 68,56 C68,48.3 61.7,42 54,42 C46.3,42 40,48.3 40,56 C40,63.7 46.3,70 54,70 Z" />
+
+    <!-- Pure Optical Red Focus Node -->
+    <path
+        android:fillColor="#FF2323"
+        android:pathData="M54,64 C58.4,64 62,60.4 62,56 C62,51.6 58.4,48 54,48 C49.6,48 46,51.6 46,56 C46,60.4 49.6,64 54,64 Z" />
+
+    <!-- Shutter Reflex Flare Glare -->
+    <path
+        android:fillColor="#CCFFFFFF"
+        android:pathData="M51,52 A3,3 0,1 1 57,52 A3,3 0,1 1 51,52" />
+
+    <!-- Red Recording LED Indicator -->
+    <path
+        android:fillColor="#FF3B30"
+        android:pathData="M26,45 C27.1,45 28,44.1 28,43 C28,41.9 27.1,41 26,41 C24.9,41 24,41.9 24,43 C24,44.1 24.9,45 26,45 Z" />
+</vector>

@@ -1,0 +1,6 @@
+{
+  "name": "BlackCamera",
+  "description": "Professional Camera app with real-time 3D .cube LUT support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
